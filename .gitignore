@@ -1,2 +1,7 @@
 /examples/engine.db
 /examples/sample
+/compile_commands.json
+/build
+/.xmake
+/private
+/.cache
