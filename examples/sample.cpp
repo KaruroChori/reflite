@@ -6,19 +6,19 @@
 using namespace reflite;
 
 struct AssetData {
-    [[=sql<{.type = db_type_t::Auto}>]] int id;
-    [[=sql<{.type = db_type_t::Text, .name = "file_path"}>]] std::string filepath;
+    [[=sql{.type = db_type_t::Auto}]] int id;
+    [[=sql{.type = db_type_t::Text, .name = "file_path"}]] std::string filepath;
     //If basic compatible types are used, no need to manually define the decorators.
     size_t offset;
 };
 
 struct AssetInsert {
-    [[=sql<{.type = db_type_t::Text, .name = "file_path"}>]] std::string_view filepath;
+    [[=sql{.type = db_type_t::Text, .name = "file_path"}]] std::string_view filepath;
     size_t offset;
 };
 
 struct AssetUpdate {
-    [[=sql<{.type = db_type_t::Text, .name = "file_path"}>]] std::string_view filepath;
+    [[=sql{.type = db_type_t::Text, .name = "file_path"}]] std::string_view filepath;
     size_t offset;
 };
 
