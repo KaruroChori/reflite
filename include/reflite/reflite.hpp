@@ -21,6 +21,7 @@
 #include <optional>
 
 #include <sqlite3.h>
+#include <ctp.hpp>
 
 namespace reflite{
 
@@ -145,6 +146,45 @@ private:
         } 
     }
 
+    template <typename In, typename Out>
+    static constexpr std::string insert_bldr(std::string_view table){
+        static constexpr auto members = define_static_array(std::meta::nonstatic_data_members_of(^^In, std::meta::access_context::unchecked()));
+        std::string sql = "INSERT INTO ";
+        sql.append(table).append(" (");
+        std::string vals = ") VALUES (";
+        bool first = true;
+        
+        template for (constexpr auto mem : members) {
+            constexpr column_t meta = details::get_col_meta(mem);
+            if constexpr (!meta.ignore) {
+                if (!first) { sql += ", "; vals += ", "; }
+                constexpr std::string_view mem_name = std::meta::identifier_of(mem);
+                sql += (meta.name[0] != '\0' ? meta.name : mem_name);
+                vals += "?";
+                first = false;
+            }
+        }
+        sql += vals + ")";
+
+        if constexpr (!std::is_same_v<Out, void>) {
+            sql += " RETURNING ";
+            static constexpr auto out_members = define_static_array(std::meta::nonstatic_data_members_of(^^Out, std::meta::access_context::unchecked()));
+            bool first_out = true;
+            template for (constexpr auto mem : out_members) {
+                constexpr column_t meta = details::get_col_meta(mem);
+                if constexpr (!meta.ignore) {
+                    if (!first_out) sql += ", ";
+                    constexpr std::string_view mem_name = std::meta::identifier_of(mem);
+                    sql += (meta.name[0] != '\0' ? meta.name : mem_name);
+                    first_out = false;
+                }
+            }
+        }
+        sql += ";";
+
+        return sql;
+    }
+
 public:
     ~Database() { auto _ = deinit(); }
 
@@ -204,43 +244,16 @@ public:
         return QueryExtract<Out>{this, stmt.value()};
     }
 
+    template <ctp::Param Table, typename In, typename Out = void>
+    std::expected<QueryInsert<In, Out>, error_t> make_insert(){       
+        auto stmt = prepare_or_cached(std::define_static_string(insert_bldr<In,Out>(Table.value)));
+        if (!stmt) return std::unexpected{stmt.error()};
+        return QueryInsert<In, Out>{this, stmt.value()};
+    }
+
     template <typename In, typename Out = void>
-    std::expected<QueryInsert<In, Out>, error_t> make_insert(std::string_view table) {
-        static constexpr auto members = define_static_array(std::meta::nonstatic_data_members_of(^^In, std::meta::access_context::unchecked()));
-        std::string sql = "INSERT INTO ";
-        sql.append(table).append(" (");
-        std::string vals = ") VALUES (";
-        bool first = true;
-        
-        template for (constexpr auto mem : members) {
-            constexpr column_t meta = details::get_col_meta(mem);
-            if constexpr (!meta.ignore) {
-                if (!first) { sql += ", "; vals += ", "; }
-                constexpr std::string_view mem_name = std::meta::identifier_of(mem);
-                sql += (meta.name[0] != '\0' ? meta.name : mem_name);
-                vals += "?";
-                first = false;
-            }
-        }
-        sql += vals + ")";
-
-        if constexpr (!std::is_same_v<Out, void>) {
-            sql += " RETURNING ";
-            static constexpr auto out_members = define_static_array(std::meta::nonstatic_data_members_of(^^Out, std::meta::access_context::unchecked()));
-            bool first_out = true;
-            template for (constexpr auto mem : out_members) {
-                constexpr column_t meta = details::get_col_meta(mem);
-                if constexpr (!meta.ignore) {
-                    if (!first_out) sql += ", ";
-                    constexpr std::string_view mem_name = std::meta::identifier_of(mem);
-                    sql += (meta.name[0] != '\0' ? meta.name : mem_name);
-                    first_out = false;
-                }
-            }
-        }
-        sql += ";";
-
-        auto stmt = prepare_or_cached(sql);
+    std::expected<QueryInsert<In, Out>, error_t> make_insert(std::string_view table){       
+        auto stmt = prepare_or_cached(insert_bldr<In,Out>(table));
         if (!stmt) return std::unexpected{stmt.error()};
         return QueryInsert<In, Out>{this, stmt.value()};
     }
@@ -607,6 +620,14 @@ public:
         auto extractor = make_query<Out>(sql);
         if (!extractor) return std::unexpected{extractor.error()};
         return extractor->with(std::forward<InArgs>(args)...);
+    }
+
+    template <ctp::Param Table, typename In, typename Out = void>
+    std::expected<std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>, error_t> 
+    insert(const In& obj) {
+        auto inserter = make_insert<Table, In, Out>();
+        if (!inserter) return std::unexpected{inserter.error()};
+        return inserter->with(obj);
     }
 
     template <typename In, typename Out = void>

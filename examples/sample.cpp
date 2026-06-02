@@ -28,16 +28,16 @@ int main() {
     
     auto ex = db.execute("CREATE TABLE IF NOT EXISTS assets(id INTEGER PRIMARY KEY, file_path TEXT NOT NULL, offset INT NOT NULL)");
     if (!ex) return 1;
-
+    
     {
         // Standard insert + Connection-level diagnostics
         AssetInsert new_asset{ .filepath = "textures/wall.png", .offset = 1024 };
-        auto err1 = db.insert(new_asset, "assets");
+        auto err1 = db.insert<"assets">(new_asset);
         if (err1) std::println("Inserted standard record. ID: {}", db.last_insert_id());
 
         // Insert + RETURNING clause
-        auto ret_data = db.insert<AssetInsert, AssetData>(
-            AssetInsert{ .filepath = "textures/wall2.png", .offset = 2048}, "assets"
+        auto ret_data = db.insert<"assets", AssetInsert, AssetData>(
+            AssetInsert{ .filepath = "textures/wall2.png", .offset = 2048}
         );
         if (ret_data && !ret_data->empty()) {
             std::println("Inserted via RETURNING. Generated ID: {} | Offset: {}", 
@@ -55,8 +55,8 @@ int main() {
 
     {
         AssetInsert new_asset{ .filepath = "textures/wall.png", .offset = 1024 };
-        auto err1 = db.insert(new_asset, "assets");
-        err1 = db.insert(AssetInsert{ .filepath = "textures/wall2.png", .offset = 1024}, "assets");
+        auto err1 = db.insert<"assets",AssetInsert>(new_asset);
+        err1 = db.insert<"assets",AssetInsert>(AssetInsert{ .filepath = "textures/wall2.png", .offset = 1024});
 
         // Reusable Queries
         auto updater  = db.make_update<AssetUpdate>("assets", "WHERE id = ?").value();
