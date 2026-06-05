@@ -26,17 +26,17 @@ int main() {
     Database db;
     if (!db.init("engine.db").has_value()) return 1;
     
-    auto ex = db.execute("CREATE TABLE IF NOT EXISTS assets(id INTEGER PRIMARY KEY, file_path TEXT NOT NULL, offset INT NOT NULL)");
+    auto ex = db.query().run("CREATE TABLE IF NOT EXISTS assets(id INTEGER PRIMARY KEY, file_path TEXT NOT NULL, offset INT NOT NULL)");
     if (!ex) return 1;
     
     {
         // Standard insert + Connection-level diagnostics
         AssetInsert new_asset{ .filepath = "textures/wall.png", .offset = 1024 };
-        auto err1 = db.insert<"assets">(new_asset);
+        auto err1 = db.insert<AssetInsert>().run<"assets">(new_asset);
         if (err1) std::println("Inserted standard record. ID: {}", db.last_insert_id());
 
         // Insert + RETURNING clause
-        auto ret_data = db.insert<"assets", AssetInsert, AssetData>(
+        auto ret_data = db.insert<AssetInsert, AssetData>().run<"assets">(
             AssetInsert{ .filepath = "textures/wall2.png", .offset = 2048}
         );
         if (ret_data && !ret_data->empty()) {
@@ -45,7 +45,7 @@ int main() {
         }
 
         // Update with RETURNING structural builder
-        auto updater = db.make_update<AssetUpdate, AssetData>("assets", "WHERE id = ?").value();
+        auto updater = db.update<AssetUpdate, AssetData>().make<"assets", "WHERE id = ?">().value();
         auto updated_rows = updater.with({.filepath="NOOO2",.offset=112}, 1);
         
         if (updated_rows && !updated_rows->empty()) {
@@ -55,14 +55,17 @@ int main() {
 
     {
         AssetInsert new_asset{ .filepath = "textures/wall.png", .offset = 1024 };
-        auto err1 = db.insert<"assets",AssetInsert>(new_asset);
-        err1 = db.insert<"assets",AssetInsert>(AssetInsert{ .filepath = "textures/wall2.png", .offset = 1024});
+        auto err1 = db.insert<AssetInsert>().run<"assets">(new_asset);
+        err1 = db.insert<AssetInsert>().run<"assets">(AssetInsert{ .filepath = "textures/wall2.png", .offset = 1024});
 
         // Reusable Queries
-        auto updater  = db.make_update<AssetUpdate>("assets", "WHERE id = ?").value();
-        auto selector = db.make_select<AssetData>("assets").value();
-        auto custom_q = db.make_query<AssetData>("SELECT id, file_path, offset FROM assets WHERE offset > ?").value();
-        auto delete_q = db.make_remove<AssetData>("assets").value();
+        auto updater  = db.update<AssetUpdate>().make<"assets", "WHERE id = ?">().value();
+        auto selector = Database::Select<AssetData>{db}.make<"assets">().value();
+        auto custom_q = db.query<AssetData>().make<"SELECT id, file_path, offset FROM assets WHERE offset > ?">().value();
+        auto delete_q = db.remove<AssetData>().make<"assets", "">().value();
+
+        auto ret_selector = Database::Select<AssetData>{db}.run<"assets">();
+        auto ret_selector2 = db.select<AssetData>().run<"assets">();
 
         //Just commented out or it will delete all content in the table which is not very interesting visually.
         //Add a where clause if you want to scope the operation.
