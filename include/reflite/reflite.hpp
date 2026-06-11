@@ -1,5 +1,3 @@
-#pragma once
-
 /**
  * @file reflite.hpp
  * @author karurochari
@@ -19,6 +17,7 @@
 #include <type_traits>
 #include <expected>
 #include <optional>
+#include <iterator> // Added for std::default_sentinel_t
 
 #include <sqlite3.h>
 #include <ctp.hpp>
@@ -135,6 +134,47 @@ public:
     template <typename In, typename Out = void> struct QueryUpdate;
     template <typename Out = void> struct QueryRemove;
     template <typename Out = void> struct QueryRaw;
+
+    // --- Ephemeral View Pattern for zero-allocation results ---
+    template <typename QueryT, typename Out>
+    struct ResultSet {
+        const QueryT* parent;
+
+        struct Iterator {
+            const QueryT* parent;
+            Out current_row;
+            int rc;
+
+            void advance() {
+                rc = sqlite3_step(parent->stmt);
+                if (rc == SQLITE_ROW) {
+                    int col = 0;
+                    static constexpr auto members = define_static_array(std::meta::nonstatic_data_members_of(^^Out, std::meta::access_context::unchecked()));
+                    template for (constexpr auto mem : members) {
+                        constexpr column_t meta = details::get_col_meta(mem);
+                        if constexpr (!meta.ignore) {
+                            using FieldType = [:remove_cvref(type_of(mem)):];
+                            current_row.[:mem:] = details::SqliteTypeMap<FieldType, meta.type>::Extract(parent->stmt, col++);
+                        }
+                    }
+                } else if (rc != SQLITE_DONE) {
+                    parent->db->log_if_error(SQLITE_ERROR, "Iterator step");
+                }
+            }
+
+            bool operator!=(std::default_sentinel_t) const { return rc == SQLITE_ROW; }
+            Iterator& operator++() { advance(); return *this; }
+            const Out& operator*() const { return current_row; }
+        };
+
+        Iterator begin() const {
+            Iterator it{parent, {}, SQLITE_OK};
+            it.advance(); // Fetch the first row lazily
+            return it;
+        }
+
+        std::default_sentinel_t end() const { return {}; }
+    };
 
 private:
     sqlite3* handle = nullptr;
@@ -387,13 +427,13 @@ public:
 
         template <ctp::Param Table>
         std::expected<Database::QueryInsert<In, Out>, Database::error_t> make() {
-            auto stmt = db.prepare_or_cached(std::define_static_string(db.insert_strbld<In, Out>(Table.value)));
+            auto stmt = db.prepare_or_cached(std::define_static_string(Database::insert_strbld<In, Out>(Table.value)));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryInsert<In, Out>{&db, stmt.value()};
         }
 
         std::expected<Database::QueryInsert<In, Out>, Database::error_t> make(std::string_view table) {
-            auto stmt = db.prepare_or_cached(db.insert_strbld<In, Out>(table));
+            auto stmt = db.prepare_or_cached(Database::insert_strbld<In, Out>(table));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryInsert<In, Out>{&db, stmt.value()};
         }
@@ -424,13 +464,13 @@ public:
 
         template <ctp::Param Table, ctp::Param WhereClause = "">
         std::expected<Database::QueryUpdate<In, Out>, Database::error_t> make() {
-            auto stmt = db.prepare_or_cached(std::define_static_string(db.update_strbld<In, Out>(Table.value, WhereClause.value)));
+            auto stmt = db.prepare_or_cached(std::define_static_string(Database::update_strbld<In, Out>(Table.value, WhereClause.value)));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryUpdate<In, Out>{&db, stmt.value()};
         }
 
         std::expected<Database::QueryUpdate<In, Out>, Database::error_t> make(std::string_view table, std::string_view where_clause = "") {
-            auto stmt = db.prepare_or_cached(db.update_strbld<In, Out>(table, where_clause));
+            auto stmt = db.prepare_or_cached(Database::update_strbld<In, Out>(table, where_clause));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryUpdate<In, Out>{&db, stmt.value()};
         }
@@ -462,13 +502,13 @@ public:
 
         template <ctp::Param Table, ctp::Param WhereClause = "">
         std::expected<Database::QueryRemove<Out>, Database::error_t> make() {
-            auto stmt = db.prepare_or_cached(std::define_static_string(db.remove_strbld<Out>(Table.value, WhereClause.value)));
+            auto stmt = db.prepare_or_cached(std::define_static_string(Database::remove_strbld<Out>(Table.value, WhereClause.value)));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryRemove<Out>{&db, stmt.value()};
         }
 
         std::expected<Database::QueryRemove<Out>, Database::error_t> make(std::string_view table, std::string_view where_clause = "") {
-            auto stmt = db.prepare_or_cached(db.remove_strbld<Out>(table, where_clause));
+            auto stmt = db.prepare_or_cached(Database::remove_strbld<Out>(table, where_clause));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryRemove<Out>{&db, stmt.value()};
         }
@@ -498,13 +538,13 @@ public:
 
         template <ctp::Param Table, ctp::Param WhereClause = "">
         std::expected<Database::QueryRaw<Out>, Database::error_t> make() {
-            auto stmt = db.prepare_or_cached(std::define_static_string(db.select_strbld<Out>(Table.value, WhereClause.value)));
+            auto stmt = db.prepare_or_cached(std::define_static_string(Database::select_strbld<Out>(Table.value, WhereClause.value)));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryRaw<Out>{&db, stmt.value()};
         }
 
         std::expected<Database::QueryRaw<Out>, Database::error_t> make(std::string_view table, std::string_view where_clause = "") {
-            auto stmt = db.prepare_or_cached(db.select_strbld<Out>(table, where_clause));
+            auto stmt = db.prepare_or_cached(Database::select_strbld<Out>(table, where_clause));
             if (!stmt) return std::unexpected{stmt.error()};
             return Database::QueryRaw<Out>{&db, stmt.value()};
         }
@@ -517,37 +557,50 @@ public:
 
     template <typename Out>
     struct QueryRaw {
+        private:
         Database* db;
         sqlite3_stmt* stmt;
 
         using ret_t = std::expected<std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>, Database::error_t>;
 
+        template <typename... InArgs>
+        error_t bind(InArgs&&... args) const{
+            sqlite3_reset(stmt);
+            sqlite3_clear_bindings(stmt);
+            int bind_idx = 1;
+            bool bind_ok = true;
+            (..., (bind_ok = bind_ok && (details::SqliteTypeMap<std::remove_cvref_t<InArgs>>::Bind(stmt, bind_idx++, args) == SQLITE_OK)));
+            
+            if (!bind_ok) {
+                db->log_if_error(SQLITE_ERROR, "QueryRaw bind");
+                return error_t::BindError;
+            }
+            return error_t::Ok;
+        }
+
+        friend struct ResultSet<QueryRaw, Out>::Iterator;
+
+        public:
+
+        template <typename... InArgs>
+        std::expected<ResultSet<QueryRaw, Out>, error_t> iterate_with(InArgs&&... args) const requires (!std::is_same_v<Out, void>) {
+            error_t ret = bind(std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
+            else return ResultSet<QueryRaw, Out>{this};
+        }
+
         ret_t with(auto&&... args) const {
+            error_t ret = bind(std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
+
             if constexpr (std::is_same_v<Out,void>){
-                sqlite3_reset(stmt);
-                sqlite3_clear_bindings(stmt);
-                int bind_idx = 1;
-                bool bind_ok = true;
-                (..., (bind_ok = bind_ok && (details::SqliteTypeMap<std::remove_cvref_t<decltype(args)>>::Bind(stmt, bind_idx++, args) == SQLITE_OK)));
-                
-                if (!bind_ok) {
-                    db->log_if_error(SQLITE_ERROR, "QueryRunner bind");
-                    return std::unexpected{error_t::BindError};
-                }
                 if (sqlite3_step(stmt) != SQLITE_DONE) {
-                    db->log_if_error(SQLITE_ERROR, "QueryRunner step");
+                    db->log_if_error(SQLITE_ERROR, "QueryRaw step");
                     return std::unexpected{error_t::StepError};
                 }
                 return std::monostate{};
             }
             else{
-                sqlite3_reset(stmt);
-                sqlite3_clear_bindings(stmt);
-                int bind_idx = 1;
-                bool bind_ok = true;
-                (..., (bind_ok = bind_ok && (details::SqliteTypeMap<std::remove_cvref_t<decltype(args)>>::Bind(stmt, bind_idx++, args) == SQLITE_OK)));
-                if (!bind_ok) return std::unexpected{error_t::BindError};
-
                 std::vector<Out> results;
                 int rc;
                 static constexpr auto members = define_static_array(std::meta::nonstatic_data_members_of(^^Out, std::meta::access_context::unchecked()));
@@ -579,12 +632,15 @@ public:
 
     template <typename In, typename Out>
     struct QueryInsert {
+        private:
         Database* db;
         sqlite3_stmt* stmt;
 
         using ReturnType = std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>;
 
-        std::expected<ReturnType, error_t> with(const In& obj) const {
+        friend struct ResultSet<QueryInsert, Out>::Iterator;
+
+        error_t bind(const In& obj) const{
             sqlite3_reset(stmt);
             sqlite3_clear_bindings(stmt);
             int bind_idx = 1;
@@ -595,10 +651,24 @@ public:
                     using ValType = std::remove_cvref_t<decltype(obj.[:mem:])>;
                     if (details::SqliteTypeMap<ValType, meta.type>::Bind(stmt, bind_idx++, obj.[:mem:]) != SQLITE_OK) {
                         db->log_if_error(SQLITE_ERROR, "QueryInsert bind");
-                        return std::unexpected{error_t::BindError};
+                        return error_t::BindError;
                     }
                 }
             }
+            return error_t::Ok;
+        }
+
+        public:
+
+        std::expected<ResultSet<QueryInsert, Out>, error_t> iterate_with(const In& obj) const requires (!std::is_same_v<Out, void>) {
+            error_t ret = bind(std::forward<decltype(obj)>(obj));
+            if(ret!=error_t::Ok)return std::unexpected{ret};
+            else return ResultSet<QueryInsert, Out>{this};
+        }
+
+        std::expected<ReturnType, error_t> with(const In& obj) const {
+            error_t ret = bind(std::forward<decltype(obj)>(obj));
+            if(ret!=error_t::Ok)return std::unexpected{ret};
             
             if constexpr (std::is_same_v<Out, void>) {
                 if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -638,13 +708,16 @@ public:
 
     template <typename In, typename Out>
     struct QueryUpdate {
+        private:
         Database* db;
         sqlite3_stmt* stmt;
 
         using ReturnType = std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>;
 
+        friend struct ResultSet<QueryUpdate, Out>::Iterator;
+
         template <typename... InArgs>
-        std::expected<ReturnType, error_t> with(const In& obj, InArgs&&... args) const {
+        error_t bind(const In& obj, InArgs&&... args) const{
             sqlite3_reset(stmt);
             sqlite3_clear_bindings(stmt);
             int bind_idx = 1;
@@ -656,12 +729,27 @@ public:
                 constexpr column_t meta = details::get_col_meta(mem);
                 if constexpr (!meta.ignore) {
                     using ValType = std::remove_cvref_t<decltype(obj.[:mem:])>;
-                    if (details::SqliteTypeMap<ValType, meta.type>::Bind(stmt, bind_idx++, obj.[:mem:]) != SQLITE_OK) return std::unexpected{error_t::BindError};
+                    if (details::SqliteTypeMap<ValType, meta.type>::Bind(stmt, bind_idx++, obj.[:mem:]) != SQLITE_OK) return error_t::BindError;
                 }
             }
 
             (..., (bind_ok = bind_ok && (details::SqliteTypeMap<std::remove_cvref_t<InArgs>>::Bind(stmt, bind_idx++, args) == SQLITE_OK)));
-            if (!bind_ok) return std::unexpected{error_t::BindError};
+            if (!bind_ok) return error_t::BindError;
+            return error_t::Ok;
+        }
+
+        public:
+        template <typename... InArgs>
+        std::expected<ResultSet<QueryUpdate, Out>, error_t> iterate_with(const In& obj, InArgs&&... args) const requires (!std::is_same_v<Out, void>) {
+            error_t ret = bind(obj, std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
+            else return ResultSet<QueryUpdate, Out>{this};
+        }
+
+        template <typename... InArgs>
+        std::expected<ReturnType, error_t> with(const In& obj, InArgs&&... args) const {
+            error_t ret = bind(obj, std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
 
             if constexpr (std::is_same_v<Out, void>) {
                 if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -701,20 +789,42 @@ public:
 
     template <typename Out>
     struct QueryRemove {
+        private:
         Database* db;
         sqlite3_stmt* stmt;
 
         using ReturnType = std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>;
 
+
         template <typename... InArgs>
-        std::expected<ReturnType, error_t> with(InArgs&&... args) const {
+        error_t bind(InArgs&&... args) const{
             sqlite3_reset(stmt);
             sqlite3_clear_bindings(stmt);
             int bind_idx = 1;
             bool bind_ok = true;
-
             (..., (bind_ok = bind_ok && (details::SqliteTypeMap<std::remove_cvref_t<InArgs>>::Bind(stmt, bind_idx++, args) == SQLITE_OK)));
-            if (!bind_ok) return std::unexpected{error_t::BindError};
+            
+            if (!bind_ok) {
+                db->log_if_error(SQLITE_ERROR, "QueryRemove bind");
+                return error_t::BindError;
+            }
+            return error_t::Ok;
+        }
+
+        friend struct ResultSet<QueryRemove, Out>::Iterator;
+
+        public:
+        template <typename... InArgs>
+        std::expected<ResultSet<QueryRemove, Out>, error_t> iterate_with(InArgs&&... args) const requires (!std::is_same_v<Out, void>) {
+            error_t ret = bind(std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
+            else return ResultSet<QueryRemove, Out>{this};
+        }
+
+        template <typename... InArgs>
+        std::expected<ReturnType, error_t> with(InArgs&&... args) const {
+            error_t ret = bind(std::forward<decltype(args)>(args)...);
+            if(ret!=error_t::Ok)return std::unexpected{ret};
 
             if constexpr (std::is_same_v<Out, void>) {
                 if (sqlite3_step(stmt) != SQLITE_DONE) {
@@ -755,4 +865,3 @@ public:
 };
 
 }
-

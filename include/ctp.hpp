@@ -7,6 +7,19 @@
 #include <meta>
 #include <ranges>
 
+#ifdef __clang__
+//Polyfills since the experimental branch for reflections has limited STD support
+namespace std {
+    consteval bool is_string_literal(const char*) { 
+        return true; 
+    }
+
+    consteval const char* string_literal_from(const char* p) { 
+        return p; 
+    }
+}
+#endif
+
 namespace ctp {
 
 // The customization point to opt-in to having your type be usable as a
