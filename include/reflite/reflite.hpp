@@ -1,3 +1,5 @@
+#pragma once
+
 /**
  * @file reflite.hpp
  * @author karurochari
