@@ -379,14 +379,14 @@ public:
         run(auto&&... args) {
             auto selector = make<Sql>();
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         std::expected<std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>, Database::error_t> 
         run(std::string_view sql, auto&&... args) {
             auto selector = make(sql);
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         template <ctp::Param Sql>
@@ -456,13 +456,13 @@ public:
         std::expected<std::vector<Out>, error_t> run(auto&&... args) {
             auto selector = make<Table, WhereClause>();
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         std::expected<std::vector<Out>, error_t> run(std::string_view table, std::string_view where_clause = {}, auto&&... args) {
             auto selector = make(table, where_clause);
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         template <ctp::Param Table, ctp::Param WhereClause = "">
@@ -530,13 +530,13 @@ public:
         std::expected<std::vector<Out>, error_t> run(auto&&... args) {
             auto selector = make<Table, WhereClause>();
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         std::expected<std::vector<Out>, error_t> run(std::string_view table, std::string_view where_clause = {}, auto&&... args) {
             auto selector = make(table, where_clause);
             if (!selector) return std::unexpected{selector.error()};
-            return selector->with(std::forward(args)...);
+            return selector->with(std::forward<decltype(args)>(args)...);
         }
 
         template <ctp::Param Table, ctp::Param WhereClause = "">
