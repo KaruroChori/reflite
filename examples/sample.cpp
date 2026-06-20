@@ -45,6 +45,10 @@ int main() {
         auto err1 = db.insert<AssetInsert>().run<"assets">(new_asset);
         if (err1) std::println("Inserted standard record. ID: {}", db.last_insert_id());
 
+        // INSERT OR REPLACE (same API as insert, generates INSERT OR REPLACE INTO)
+        auto err_replace = db.insert_or_replace<AssetInsert>().run<"assets">(AssetInsert{ .filepath = "textures/wall.png", .offset = 2048 });
+        if (err_replace) std::println("INSERT OR REPLACE succeeded.");
+
         // Insert + RETURNING clause (Using the zero-allocation view pattern)
         auto inserter = db.insert<AssetInsert, AssetData>().make<"assets">().value();
         if (auto res = inserter.iterate_with(AssetInsert{ .filepath = "textures/wall2.png", .offset = 2048})) {

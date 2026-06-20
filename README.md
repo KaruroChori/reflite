@@ -1,11 +1,11 @@
 ## What is this? Can I eat it?
 
-A single header library for C++26, leveraging reflections to wrap [sqlite3](https://sqlite.org/).  
+A header-only library for C++26, leveraging reflections to wrap [sqlite3](https://sqlite.org/).  
 Basically, it allows to leverage plain struct types as the implicit backbone for the payload on several kinds of queries, as well as their implicit or explicit returned values if using the [`RETURNING` clause](https://sqlite.org/lang_returning.html).  
 
 It offers custom specialized support for:
 
-- `INSERT`
+- `INSERT` (and `INSERT OR REPLACE`)
 - `DELETE`
 - `SELECT`
 - `UPDATE`

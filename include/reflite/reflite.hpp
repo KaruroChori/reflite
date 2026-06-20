@@ -134,7 +134,7 @@ public:
 
     // Type-erased query executors
     template <typename Out = void> struct QueryRaw;
-    template <typename In, typename Out = void> struct QueryInsert;
+    template <typename In, typename Out = void, bool OrReplace = false> struct QueryInsert;
     template <typename In, typename Out = void> struct QueryUpdate;
     template <typename Out = void> struct QueryRemove;
 
@@ -188,10 +188,12 @@ private:
         } 
     }
 
-    template <typename In, typename Out>
+    template <typename In, typename Out, bool OrReplace = false>
     static constexpr std::string insert_strbld(std::string_view table){
         static constexpr auto members = define_static_array(std::meta::nonstatic_data_members_of(^^In, std::meta::access_context::unchecked()));
-        std::string sql = "INSERT INTO ";
+        std::string sql;
+        if constexpr (OrReplace) sql = "INSERT OR REPLACE INTO ";
+        else sql = "INSERT INTO ";
         sql.append(table).append(" (");
         std::string vals = ") VALUES (";
         bool first = true;
@@ -407,13 +409,13 @@ public:
     Query<Out> query(){return Query<Out>(*this);}
 
 
-    template <typename In, typename Out = void>
+    template <typename In, typename Out = void, bool OrReplace = false>
     struct Insert{
         Database& db;
 
         Insert(Database& db):db(db){}
 
-        template <ctp::Param Table, ctp::Param WhereClause = "">
+        template <ctp::Param Table>
         std::expected<std::conditional_t<std::is_same_v<Out, void>, std::monostate, std::vector<Out>>, Database::error_t> 
         run(const In& obj) {
             auto selector = make<Table>();
@@ -429,21 +431,27 @@ public:
         }
 
         template <ctp::Param Table>
-        std::expected<Database::QueryInsert<In, Out>, Database::error_t> make() {
-            auto stmt = db.prepare_or_cached(std::define_static_string(Database::insert_strbld<In, Out>(Table.value)));
+        std::expected<Database::QueryInsert<In, Out, OrReplace>, Database::error_t> make() {
+            auto stmt = db.prepare_or_cached(std::define_static_string(Database::insert_strbld<In, Out, OrReplace>(Table.value)));
             if (!stmt) return std::unexpected{stmt.error()};
-            return Database::QueryInsert<In, Out>{&db, stmt.value()};
+            return Database::QueryInsert<In, Out, OrReplace>{&db, stmt.value()};
         }
 
-        std::expected<Database::QueryInsert<In, Out>, Database::error_t> make(std::string_view table) {
-            auto stmt = db.prepare_or_cached(Database::insert_strbld<In, Out>(table));
+        std::expected<Database::QueryInsert<In, Out, OrReplace>, Database::error_t> make(std::string_view table) {
+            auto stmt = db.prepare_or_cached(Database::insert_strbld<In, Out, OrReplace>(table));
             if (!stmt) return std::unexpected{stmt.error()};
-            return Database::QueryInsert<In, Out>{&db, stmt.value()};
+            return Database::QueryInsert<In, Out, OrReplace>{&db, stmt.value()};
         }
     };
 
     template <typename In, typename Out = void>
+    using InsertOrReplace = Insert<In, Out, true>;
+
+    template <typename In, typename Out = void>
     Insert<In, Out> insert(){return Insert<In, Out>(*this);}
+
+    template <typename In, typename Out = void>
+    InsertOrReplace<In, Out> insert_or_replace(){return InsertOrReplace<In, Out>(*this);}
 
 
     template <typename In, typename Out = void>
@@ -633,7 +641,7 @@ public:
         ~QueryRaw(){ if(stmt)sqlite3_finalize(stmt); }
     };
 
-    template <typename In, typename Out>
+    template <typename In, typename Out, bool OrReplace>
     struct QueryInsert {
         private:
         Database* db;
