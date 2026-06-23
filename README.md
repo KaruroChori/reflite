@@ -24,7 +24,7 @@ Not exacly the best code I ever wrote, but it was the first time trying to get s
 ## Example
 
 Check [this](./examples/sample.cpp) for a basic example. Ugly code, but it covers most features which have been implemented so far.  
-You can see it working at [compiler explorer](https://godbolt.org/z/f3GqevG5s) if you don't have a compatible toolchain locally.
+You can see it working at [compiler explorer](https://godbolt.org/z/afev8356e) if you don't have a compatible toolchain locally.
 
 ## Licence
 
