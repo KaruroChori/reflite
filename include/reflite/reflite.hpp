@@ -132,6 +132,9 @@ public:
     bool log_errors = true;
     int (*logger)(const char* str, ...) = nullptr;
 
+    // Access the underlying connection (no ownership transfer).
+    sqlite3* raw() const noexcept { return handle; }
+
     // Type-erased query executors
     template <typename Out = void> struct QueryRaw;
     template <typename In, typename Out = void, bool OrReplace = false> struct QueryInsert;
